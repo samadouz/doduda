@@ -937,15 +937,14 @@ func DownloadImagesLauncher(hashJson *ankabuffer.Manifest, bin int, maxConcurren
 			close(errorChan)
 		}()
 
+		var firstErr error
 		for err := range errorChan {
-			if err != nil {
-				return err
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 
-		wg.Wait()
-
-		return nil
+		return firstErr
 	default:
 		return errors.New("unsupported version: " + strconv.Itoa(version))
 	}
