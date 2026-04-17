@@ -540,19 +540,22 @@ func UnpackUnityBundle(category string, inputPath string, outputPath string, mut
 	outputRawFileName := filepath.Base(outputFileName)
 
 	inputDir := filepath.Dir(inputPath)
+	outputDir := filepath.Dir(outputFileName)
 
-	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", path.Join("/app", "data", inputRawFileName), path.Join("/app", "data", outputRawFileName)}
+	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", path.Join("/app", "input", inputRawFileName), path.Join("/app", "output", outputRawFileName)}
 
 	ctx := context.Background()
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: "stelzo/doduda-umbu:" + ARCH,
 		Cmd:   cmd,
 		Volumes: map[string]struct{}{
-			"/app/data": {},
+			"/app/input":  {},
+			"/app/output": {},
 		},
 	}, &container.HostConfig{
 		Binds: []string{
-			fmt.Sprintf("%s:/app/data", inputDir),
+			fmt.Sprintf("%s:/app/input", inputDir),
+			fmt.Sprintf("%s:/app/output", outputDir),
 		},
 		AutoRemove: true,
 	}, nil, nil, "")
