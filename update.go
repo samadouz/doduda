@@ -687,50 +687,65 @@ func UnpackUnityImages(inputDir string, outputDir string, muteSpinner bool, head
 		log.Fatal(err)
 	}
 
+	hasBundles := false
 	for _, bundle := range bundles {
-		if bundle.IsDir() || !strings.HasSuffix(bundle.Name(), ".imagebundle") {
-			continue
+		if !bundle.IsDir() && strings.HasSuffix(bundle.Name(), ".imagebundle") {
+			hasBundles = true
+			break
 		}
+	}
 
-		absInputPath := filepath.Join(inputDir, bundle.Name())
+	if !hasBundles {
+		return nil
+	}
 
-		cmd := []string{"./data", "--unity-version", "6000.0.41.58439"}
+	absInputDir, err := filepath.Abs(inputDir)
+	if err != nil {
+		return err
+	}
 
-		uid := strconv.Itoa(os.Getuid())
-		gid := strconv.Itoa(os.Getgid())
-		user := uid + ":" + gid
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return err
+	}
 
-		resp, err := cli.ContainerCreate(ctx, &container.Config{
-			Image: imageName,
-			Cmd:   cmd,
-			User:  user,
-			Volumes: map[string]struct{}{
-				"/app/AssetStudio/data":     {},
-				"/app/AssetStudio/ASExport": {},
-			},
-		}, &container.HostConfig{
-			Binds: []string{
-				fmt.Sprintf("%s:/app/AssetStudio/data", absInputPath),
-				fmt.Sprintf("%s:/app/AssetStudio/ASExport", outputDir)},
-			AutoRemove: true,
-		}, nil, nil, "")
+	currentContainerID, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("could not get container hostname: %w", err)
+	}
+
+	cmd := []string{
+		absInputDir,
+		"--unity-version", "6000.0.41.58439",
+		"--output", absOutputDir,
+		"--overwrite-existing",
+	}
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image: imageName,
+		Cmd:   cmd,
+	}, &container.HostConfig{
+		VolumesFrom: []string{currentContainerID},
+		AutoRemove:  true,
+	}, nil, nil, "")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+
+	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
 		if err != nil {
-			log.Fatal(err)
-		}
-
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 			return err
 		}
-
-		statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return err
-			}
-		case <-statusCh:
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("assetstudio-cli exited with code %d processing %s", status.StatusCode, absInputDir)
 		}
-
 	}
 
 	return nil
