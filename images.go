@@ -229,6 +229,10 @@ func cleanImages(dir string, resolution *int) error {
 }
 
 func rename_or_rmfirst(from string, to string) error {
+	if _, err := os.Stat(from); os.IsNotExist(err) {
+		return nil
+	}
+
 	if _, err := os.Stat(to); err == nil {
 		err = os.RemoveAll(to)
 		if err != nil {
