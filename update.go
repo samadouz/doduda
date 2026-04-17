@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -536,28 +535,23 @@ func UnpackUnityBundle(category string, inputPath string, outputPath string, mut
 	outputTrimmed := strings.TrimSuffix(outputPath, ".asset.json")
 	outputFileName := outputTrimmed + ".json"
 
-	inputRawFileName := filepath.Base(inputPath)
-	outputRawFileName := filepath.Base(outputFileName)
+	// Use VolumesFrom so the child container inherits our volume mounts.
+	// Direct Binds fail in DooD when /app/raw is a named volume (the path
+	// doesn't exist on the host, so Docker mounts an empty directory).
+	currentContainerID, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("could not get container hostname: %w", err)
+	}
 
-	inputDir := filepath.Dir(inputPath)
-	outputDir := filepath.Dir(outputFileName)
-
-	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", path.Join("/app", "input", inputRawFileName), path.Join("/app", "output", outputRawFileName)}
+	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", inputPath, outputFileName}
 
 	ctx := context.Background()
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: "stelzo/doduda-umbu:" + ARCH,
 		Cmd:   cmd,
-		Volumes: map[string]struct{}{
-			"/app/input":  {},
-			"/app/output": {},
-		},
 	}, &container.HostConfig{
-		Binds: []string{
-			fmt.Sprintf("%s:/app/input", inputDir),
-			fmt.Sprintf("%s:/app/output", outputDir),
-		},
-		AutoRemove: true,
+		VolumesFrom: []string{currentContainerID},
+		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
 		return err
@@ -573,7 +567,10 @@ func UnpackUnityBundle(category string, inputPath string, outputPath string, mut
 		if err != nil {
 			return err
 		}
-	case <-statusCh:
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("doduda-umbu exited with code %d processing %s", status.StatusCode, filepath.Base(inputPath))
+		}
 	}
 
 	return nil
@@ -598,25 +595,20 @@ func UnpackUnityI18n(category string, inputPath string, outputPath string, muteS
 	}
 	defer cli.Close()
 
-	inputRawFileName := filepath.Base(inputPath)
-	outputRawFileName := filepath.Base(outputPath)
+	currentContainerID, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("could not get container hostname: %w", err)
+	}
 
-	inputDir := filepath.Dir(inputPath)
-
-	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", path.Join("/app", "data", inputRawFileName), path.Join("/app", "data", outputRawFileName)}
+	cmd := []string{"dotnet", "out/unity-bundle-unwrap.dll", inputPath, outputPath}
 
 	ctx := context.Background()
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: "stelzo/doduda-umbu:" + ARCH,
 		Cmd:   cmd,
-		Volumes: map[string]struct{}{
-			"/app/data": {},
-		},
 	}, &container.HostConfig{
-		Binds: []string{
-			fmt.Sprintf("%s:/app/data", inputDir),
-		},
-		AutoRemove: true,
+		VolumesFrom: []string{currentContainerID},
+		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
 		return err
@@ -632,7 +624,10 @@ func UnpackUnityI18n(category string, inputPath string, outputPath string, muteS
 		if err != nil {
 			return err
 		}
-	case <-statusCh:
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("doduda-umbu exited with code %d processing %s", status.StatusCode, filepath.Base(inputPath))
+		}
 	}
 
 	return nil
