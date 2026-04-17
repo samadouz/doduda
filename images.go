@@ -107,6 +107,10 @@ func isOnlyDigits(s string) bool {
 }
 
 func cleanImages(dir string, resolution *int) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
+
 	type fileStuff struct {
 		path string
 		img  image.Config
