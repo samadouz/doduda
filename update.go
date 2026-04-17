@@ -551,29 +551,12 @@ func UnpackUnityBundle(category string, inputPath string, outputPath string, mut
 		Cmd:   cmd,
 	}, &container.HostConfig{
 		VolumesFrom: []string{currentContainerID},
-		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
 		return err
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return err
-	}
-
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			return fmt.Errorf("doduda-umbu exited with code %d processing %s", status.StatusCode, filepath.Base(inputPath))
-		}
-	}
-
-	return nil
+	return runChildContainerAndCollectLogs(cli, ctx, resp.ID, "doduda-umbu", filepath.Base(inputPath))
 }
 
 func UnpackUnityI18n(category string, inputPath string, outputPath string, muteSpinner bool, headless bool) error {
@@ -608,29 +591,12 @@ func UnpackUnityI18n(category string, inputPath string, outputPath string, muteS
 		Cmd:   cmd,
 	}, &container.HostConfig{
 		VolumesFrom: []string{currentContainerID},
-		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
 		return err
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return err
-	}
-
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			return fmt.Errorf("doduda-umbu exited with code %d processing %s", status.StatusCode, filepath.Base(inputPath))
-		}
-	}
-
-	return nil
+	return runChildContainerAndCollectLogs(cli, ctx, resp.ID, "doduda-umbu", filepath.Base(inputPath))
 }
 
 func PullImages(images []string, muteSpinner bool, headless bool) error {
@@ -726,17 +692,24 @@ func UnpackUnityImages(inputDir string, outputDir string, muteSpinner bool, head
 		Cmd:   cmd,
 	}, &container.HostConfig{
 		VolumesFrom: []string{currentContainerID},
-		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	return runChildContainerAndCollectLogs(cli, ctx, resp.ID, "assetstudio-cli", absInputDir)
+}
+
+func runChildContainerAndCollectLogs(cli *client.Client, ctx context.Context, containerID string, childName string, subject string) error {
+	defer func() {
+		_ = cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	}()
+
+	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return err
 	}
 
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	statusCh, errCh := cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		if err != nil {
@@ -744,7 +717,26 @@ func UnpackUnityImages(inputDir string, outputDir string, muteSpinner bool, head
 		}
 	case status := <-statusCh:
 		if status.StatusCode != 0 {
-			return fmt.Errorf("assetstudio-cli exited with code %d processing %s", status.StatusCode, absInputDir)
+			logReader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+			})
+			if err != nil {
+				return fmt.Errorf("%s exited with code %d processing %s (could not read logs: %w)", childName, status.StatusCode, subject, err)
+			}
+			defer logReader.Close()
+
+			logBytes, err := io.ReadAll(logReader)
+			if err != nil {
+				return fmt.Errorf("%s exited with code %d processing %s (could not read log stream: %w)", childName, status.StatusCode, subject, err)
+			}
+
+			logOutput := strings.TrimSpace(string(logBytes))
+			if logOutput == "" {
+				return fmt.Errorf("%s exited with code %d processing %s", childName, status.StatusCode, subject)
+			}
+
+			return fmt.Errorf("%s exited with code %d processing %s\n%s", childName, status.StatusCode, subject, logOutput)
 		}
 	}
 
